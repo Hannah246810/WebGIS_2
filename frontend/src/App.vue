@@ -15,12 +15,18 @@
     </div>
 
     <main class="native-content">
-      
+
       <div id="map-wrapper" :class="{ 'hidden-view': currentTab !== 'map' }">
         <div id="map"></div>
 
         <div class="glass-filters">
-          <span v-for="cat in categories" :key="cat" :class="['filter-chip', activeCategory === cat ? 'active' : '']" @click="filterByCategory(cat)">
+          <span
+            v-for="cat in categories"
+            :key="cat"
+            :class="['filter-chip', activeCategory === cat ? 'active' : '']"
+            @click="filterByCategory(cat)"
+          >
+            <span v-if="cat !== '全部'" class="chip-dot" :style="{ background: catColor(cat) }"></span>
             {{ cat }}
           </span>
         </div>
@@ -49,15 +55,32 @@
         </div>
         <div class="scroll-list">
           <div v-if="places.length === 0" class="empty-state">未找到相关攻略信息</div>
-          <div v-for="item in places" :key="item.place_id" class="info-card">
-            <div class="card-head">
-              <h3 class="card-title">{{ item.name }}</h3>
-              <span class="tag-cat">{{ item.category }}</span>
+
+          <div v-for="item in places" :key="item.place_id" class="p-card" @click="openDetail(item)">
+            <div class="p-card-top">
+              <div class="p-orbit-icon" :style="{ '--ring-color': catColor(item.category) }">
+                <span class="p-orbit-ring"></span>
+                <span class="p-orbit-emoji">{{ catIcon(item.category) }}</span>
+              </div>
+              <div class="p-card-info">
+                <div class="p-card-title-row">
+                  <h3 class="p-card-title">{{ item.name }}</h3>
+                  <span :class="['p-status-dot', statusClass(item.status_tag)]"></span>
+                </div>
+                <span class="p-card-sub">{{ item.category }} · {{ item.status_tag || '状态未知' }}</span>
+              </div>
+              <span class="p-card-chevron">›</span>
             </div>
-            <p class="card-desc">{{ item.description || '暂无位置描述' }}</p>
+
+            <p class="p-card-desc">{{ item.description || '暂无位置描述' }}</p>
+
+            <div class="p-chip-row" v-if="getStrategy(item).highlights.length">
+              <span v-for="(h, i) in getStrategy(item).highlights.slice(0, 3)" :key="i" class="p-chip">✦ {{ h }}</span>
+            </div>
+
             <div class="card-foot">
-              <span class="card-time">营业: {{ item.open_hours || '未知' }}</span>
-              <span class="card-action" @click="locateOnMap(item)">查看位置 ➔</span>
+              <span class="card-time">🕒 {{ item.open_hours || '未知' }}</span>
+              <span class="card-action" @click.stop="locateOnMap(item)">📍 地图定位</span>
             </div>
           </div>
         </div>
@@ -78,6 +101,7 @@
         </div>
       </div>
 
+      <!-- ============ 新增攻略：底部表单 ============ -->
       <div :class="['bottom-sheet-bg', showForm ? 'show' : '']" @click.self="closeForm">
         <div class="bottom-sheet">
           <div class="drag-bar"></div>
@@ -86,7 +110,7 @@
             <h3 class="sheet-title">录入新攻略</h3>
             <span class="action-text submit" @click="submitNewPlace">保存</span>
           </div>
-          
+
           <div class="sheet-scroll-body">
             <div class="input-block">
               <input type="text" v-model="formData.name" placeholder="主建筑/设施名称" class="large-input" />
@@ -97,6 +121,8 @@
                 <input type="text" v-model="formData.open_hours" placeholder="营业时间" class="std-input" />
               </div>
               <input type="text" v-model="formData.description" placeholder="详细位置描述 (选填)" class="std-input" />
+              <input type="text" v-model="formData.highlights" placeholder="亮点标签，用逗号分隔，如：人均15元,招牌黄焖鸡" class="std-input" />
+              <textarea v-model="formData.tips" placeholder="小贴士 (选填，如：从西门进二楼靠窗视野好)" class="std-textarea"></textarea>
             </div>
 
             <div class="seg-control">
@@ -111,8 +137,12 @@
                   <span class="del-btn" @click="removeFloor(fIdx)">移除</span>
                 </div>
                 <div class="shop-grid">
-                  <input v-for="(shop, sIdx) in floor.shops" :key="sIdx" type="text" v-model="shop.shopName" placeholder="店铺名" class="shop-input" />
-                  <button class="add-shop-btn" @click="addShopToFloor(fIdx)">+ 店铺</button>
+                  <div v-for="(shop, sIdx) in floor.shops" :key="sIdx" class="shop-row">
+                    <input type="text" v-model="shop.shopName" placeholder="店铺/窗口名" class="shop-input" />
+                    <input type="text" v-model="shop.price" placeholder="价格" class="shop-price-input" />
+                    <span :class="['shop-rec-toggle', shop.recommend ? 'active' : '']" @click="shop.recommend = !shop.recommend">🔥</span>
+                  </div>
+                  <button class="add-shop-btn" @click="addShopToFloor(fIdx)">+ 店铺/窗口</button>
                 </div>
               </div>
               <button class="add-floor-btn" @click="addFloor">+ 新增楼层</button>
@@ -120,6 +150,109 @@
           </div>
         </div>
       </div>
+
+      <!-- ============ 详情：半屏攻略抽屉 ============ -->
+      <div :class="['detail-sheet-bg', showDetail ? 'show' : '']" @click.self="closeDetail">
+        <div class="detail-sheet">
+          <div class="drag-bar"></div>
+
+          <div v-if="selectedPlace" class="detail-scroll">
+            <div class="detail-hero">
+              <div class="hero-orbit-icon" :style="{ '--ring-color': catColor(selectedPlace.category) }">
+                <span class="hero-orbit-ring"></span>
+                <span class="hero-orbit-ring ring-2"></span>
+                <span class="hero-emoji">{{ catIcon(selectedPlace.category) }}</span>
+              </div>
+              <div class="hero-info">
+                <h2 class="hero-title">{{ selectedPlace.name }}</h2>
+                <div class="hero-meta">
+                  <span class="hero-cat-badge" :style="{ background: catColor(selectedPlace.category) }">{{ selectedPlace.category }}</span>
+                  <span :class="['hero-status', statusClass(selectedPlace.status_tag)]">
+                    <span class="p-status-dot" :class="statusClass(selectedPlace.status_tag)"></span>
+                    {{ selectedPlace.status_tag || '状态未知' }}
+                  </span>
+                </div>
+              </div>
+              <span class="hero-close" @click="closeDetail">✕</span>
+            </div>
+
+            <div class="detail-chip-row" v-if="detail.highlights.length">
+              <span v-for="(h, i) in detail.highlights" :key="i" class="detail-chip">✦ {{ h }}</span>
+            </div>
+
+            <div class="detail-section" v-if="selectedPlace.description">
+              <div class="section-label">📍 位置描述</div>
+              <p class="section-text">{{ selectedPlace.description }}</p>
+            </div>
+
+            <div class="detail-section">
+              <div class="section-label">🕒 开放时间</div>
+              <p class="section-text">{{ selectedPlace.open_hours || '暂未收录，欢迎同学补充' }}</p>
+            </div>
+
+            <div class="detail-section" v-if="detail.floors.length">
+              <div class="section-label">🏢 楼层 & 店铺攻略</div>
+              <div v-for="(f, fIdx) in detail.floors" :key="fIdx" class="floor-detail-block">
+                <div class="floor-detail-head">{{ f.floorName }}</div>
+                <div class="shop-detail-list">
+                  <div v-for="(s, sIdx) in f.shops" :key="sIdx" class="shop-detail-row-wrap">
+                    <div class="shop-detail-row">
+                      <span class="shop-detail-name">
+                        {{ s.shopName }}
+                        <span v-if="s.recommend" class="rec-badge">🔥 推荐</span>
+                      </span>
+                      <span class="shop-detail-price" v-if="s.price">{{ s.price }}</span>
+                    </div>
+                    <p class="shop-detail-desc" v-if="s.desc">{{ s.desc }}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="detail-section" v-if="detail.priceList.length">
+              <div class="section-label">💰 价目表</div>
+              <div v-for="(p, i) in detail.priceList" :key="i" class="price-row">
+                <span>{{ p.item }}</span>
+                <span class="price-value">{{ p.price }}</span>
+              </div>
+            </div>
+
+            <div class="detail-section" v-if="detail.companies.length || detail.process">
+              <div class="section-label">📦 快递信息</div>
+              <div class="detail-chip-row" v-if="detail.companies.length">
+                <span v-for="(c, i) in detail.companies" :key="i" class="detail-chip">{{ c }}</span>
+              </div>
+              <p class="section-text" v-if="detail.process">{{ detail.process }}</p>
+              <p class="peak-hint" v-if="detail.peakHours">⚠️ 高峰期：{{ detail.peakHours }}，建议错峰取件</p>
+            </div>
+
+            <div class="detail-section" v-if="detail.studyZones.length">
+              <div class="section-label">⭐ 分区评测（学生实测）</div>
+              <div v-for="(z, i) in detail.studyZones" :key="i" class="zone-block">
+                <div class="zone-head">
+                  <span class="zone-name">{{ z.zone }}</span>
+                  <span class="zone-stars">
+                    <span v-for="n in 5" :key="n" class="zone-dot" :class="dotClass(z.rating, n)"></span>
+                  </span>
+                </div>
+                <p class="zone-desc">{{ z.desc }}</p>
+              </div>
+            </div>
+
+            <div class="detail-section tips-section" v-if="detail.tips">
+              💡 {{ detail.tips }}
+            </div>
+
+            <div class="detail-footer">
+              <button :class="['detail-fav-btn', isFav ? 'active' : '']" @click="toggleFavorite">
+                {{ isFav ? '★ 已收藏' : '☆ 收藏' }}
+              </button>
+              <button class="detail-nav-btn" @click="locateOnMap(selectedPlace)">🧭 查看位置</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </main>
 
     <nav class="native-tabbar">
@@ -140,16 +273,40 @@
 </template>
 
 <script setup>
-import { onMounted, ref, nextTick } from 'vue';
+import { onMounted, ref, computed, nextTick } from 'vue';
 import * as L from 'leaflet';
 // 绑定到 window 以防 heatmap 插件找不到 L
 window.L = L;
-import 'leaflet.heat'; 
+import 'leaflet.heat';
 import axios from 'axios';
 
 // --- 基础配置 ---
 const categories = ['全部', '餐饮', '快递', '学习', '生活', '交通', '其他'];
 const roleNameMap = { guest: '游客', student: '河海学生', admin: '管理员' };
+
+// 分类 -> 图标/主题色映射（用于圆周轨迹图标与标签配色）
+const categoryMeta = {
+  '餐饮': { icon: '🍜', color: '#f97316' },
+  '快递': { icon: '📦', color: '#0ea5e9' },
+  '学习': { icon: '📚', color: '#8b5cf6' },
+  '生活': { icon: '🛍️', color: '#10b981' },
+  '交通': { icon: '🚌', color: '#f59e0b' },
+  '其他': { icon: '📍', color: '#6b7280' },
+};
+const catIcon = (cat) => categoryMeta[cat]?.icon || '📍';
+const catColor = (cat) => categoryMeta[cat]?.color || '#6b7280';
+const statusClass = (tag) => {
+  if (tag === '高峰期') return 'busy';
+  if (tag === '今日休息') return 'closed';
+  return 'ok';
+};
+// 五分制星级 -> 圆点填充状态（满/半/空），呼应"圆周轨迹"视觉语言
+const dotClass = (rating, n) => {
+  const r = Number(rating) || 0;
+  if (r >= n) return 'full';
+  if (r >= n - 0.5) return 'half';
+  return 'empty';
+};
 
 // --- 状态管理 ---
 const currentTab = ref('map');
@@ -169,15 +326,60 @@ const toastMessage = ref('');
 
 // 表单响应式数据
 const showForm = ref(false);
-const formData = ref({ 
+const emptyFloor = () => ({ floorName: '1楼', shops: [{ shopName: '', price: '', recommend: false }] });
+const formData = ref({
   name: '', category: '餐饮', lng: '', lat: '', description: '', open_hours: '',
-  isComplex: false, floors: [{ floorName: '1楼', shops: [{ shopName: '' }] }] 
+  highlights: '', tips: '',
+  isComplex: false, floors: [emptyFloor()],
 });
+
+// 详情抽屉状态
+const showDetail = ref(false);
+const selectedPlace = ref(null);
+
+// 本地收藏（登录态学生/管理员可用，纯前端持久化，无需后端接口）
+const favoriteIds = ref(new Set());
+try {
+  favoriteIds.value = new Set(JSON.parse(localStorage.getItem('hhu_favorite_ids') || '[]'));
+} catch (e) { /* 忽略解析失败 */ }
+
+const isFav = computed(() => !!selectedPlace.value && favoriteIds.value.has(selectedPlace.value.place_id));
+
+const toggleFavorite = () => {
+  if (!selectedPlace.value) return;
+  if (currentUserRole.value === 'guest') { showToast('游客暂不能收藏，请先切换身份'); return; }
+  const id = selectedPlace.value.place_id;
+  const next = new Set(favoriteIds.value);
+  if (next.has(id)) { next.delete(id); showToast('已取消收藏'); }
+  else { next.add(id); showToast('⭐ 已加入收藏'); }
+  favoriteIds.value = next;
+  try { localStorage.setItem('hhu_favorite_ids', JSON.stringify([...next])); } catch (e) { /* 忽略 */ }
+};
+
+// 统一解析 content_json（strategy_data），兼容不同类别的攻略结构
+const parseStrategy = (item) => {
+  const raw = item && item.strategy_data;
+  if (!raw || typeof raw !== 'object') {
+    return { highlights: [], tips: '', floors: [], priceList: [], companies: [], process: '', peakHours: '', studyZones: [] };
+  }
+  return {
+    highlights: Array.isArray(raw.highlights) ? raw.highlights : [],
+    tips: raw.tips || '',
+    floors: (Array.isArray(raw.floors) ? raw.floors : []).filter(f => f && f.floorName && f.shops && f.shops.length),
+    priceList: Array.isArray(raw.price_list) ? raw.price_list : [],
+    companies: Array.isArray(raw.companies) ? raw.companies : [],
+    process: raw.process || '',
+    peakHours: raw.peak_hours || '',
+    studyZones: Array.isArray(raw.study_zones) ? raw.study_zones : [],
+  };
+};
+const getStrategy = (item) => parseStrategy(item);
+const detail = computed(() => parseStrategy(selectedPlace.value || {}));
 
 const mapInstance = ref(null);
 const markersGroup = ref(null);
 const tempMarker = ref(null);
-const bufferCircle = ref(null); 
+const bufferCircle = ref(null);
 const heatLayer = ref(null); // 热力图图层
 
 // --- 交互逻辑 ---
@@ -234,40 +436,46 @@ const toggleHeatmap = () => {
 
   if (isHeatmapMode.value) {
     // 隐藏普通图标
-    if(markersGroup.value) mapInstance.value.removeLayer(markersGroup.value);
-    
+    if (markersGroup.value) mapInstance.value.removeLayer(markersGroup.value);
+
     // 提取坐标数据 [lat, lng, intensity]
     const heatData = places.value.filter(p => p.lat && p.lng).map(p => [parseFloat(p.lat), parseFloat(p.lng), 1]);
-    
+
     // 渲染热力图层
-    heatLayer.value = L.heatLayer(heatData, { 
-      radius: 25, blur: 15, maxZoom: 17, 
-      gradient: {0.4: 'blue', 0.6: 'cyan', 0.7: 'lime', 0.8: 'yellow', 1.0: 'red'} 
+    heatLayer.value = L.heatLayer(heatData, {
+      radius: 25, blur: 15, maxZoom: 17,
+      gradient: { 0.4: 'blue', 0.6: 'cyan', 0.7: 'lime', 0.8: 'yellow', 1.0: 'red' }
     }).addTo(mapInstance.value);
-    
+
     showToast('🔥 热力图已开启：颜色越暖代表设施越密集');
   } else {
     // 恢复普通图标
-    if(markersGroup.value) mapInstance.value.addLayer(markersGroup.value);
+    if (markersGroup.value) mapInstance.value.addLayer(markersGroup.value);
   }
 };
 
-const addFloor = () => { formData.value.floors.push({ floorName: '', shops: [{ shopName: '' }] }); };
+const addFloor = () => { formData.value.floors.push(emptyFloor()); };
 const removeFloor = (idx) => { formData.value.floors.splice(idx, 1); };
-const addShopToFloor = (fIdx) => { formData.value.floors[fIdx].shops.push({ shopName: '' }); };
+const addShopToFloor = (fIdx) => { formData.value.floors[fIdx].shops.push({ shopName: '', price: '', recommend: false }); };
 
 const closeForm = () => {
   showForm.value = false;
   removeTempLayers();
 };
 
+const openDetail = (item) => {
+  selectedPlace.value = item;
+  showDetail.value = true;
+};
+const closeDetail = () => { showDetail.value = false; };
+
 const removeTempLayers = () => {
   if (tempMarker.value && mapInstance.value) { mapInstance.value.removeLayer(tempMarker.value); tempMarker.value = null; }
   if (bufferCircle.value && mapInstance.value) { mapInstance.value.removeLayer(bufferCircle.value); bufferCircle.value = null; }
-  if (heatLayer.value && mapInstance.value) { 
-    mapInstance.value.removeLayer(heatLayer.value); heatLayer.value = null; 
-    if(markersGroup.value && mapInstance.value && !mapInstance.value.hasLayer(markersGroup.value)){
-       mapInstance.value.addLayer(markersGroup.value);
+  if (heatLayer.value && mapInstance.value) {
+    mapInstance.value.removeLayer(heatLayer.value); heatLayer.value = null;
+    if (markersGroup.value && mapInstance.value && !mapInstance.value.hasLayer(markersGroup.value)) {
+      mapInstance.value.addLayer(markersGroup.value);
     }
   }
 };
@@ -275,8 +483,8 @@ const removeTempLayers = () => {
 const filterByCategory = (cat) => {
   activeCategory.value = cat;
   fetchPlaces();
-  if(isHeatmapMode.value) { // 如果在热力图模式下切换分类，重绘热力图
-    toggleHeatmap(); 
+  if (isHeatmapMode.value) { // 如果在热力图模式下切换分类，重绘热力图
+    toggleHeatmap();
     setTimeout(toggleHeatmap, 50);
   }
 };
@@ -302,7 +510,7 @@ const executeBufferAnalysis = (lat, lng) => {
 
   let count = 0;
   places.value.forEach(p => {
-    if(p.lat && p.lng) {
+    if (p.lat && p.lng) {
       const distance = mapInstance.value.distance([lat, lng], [p.lat, p.lng]);
       if (distance <= 200) count++;
     }
@@ -312,39 +520,37 @@ const executeBufferAnalysis = (lat, lng) => {
   mapInstance.value.fitBounds(bufferCircle.value.getBounds(), { padding: [50, 50] });
 };
 
-// --- 地图渲染与精美弹窗 ---
+// --- 地图渲染与精美弹窗（点击"查看完整攻略"打开半屏详情抽屉） ---
 const renderMarkersOnMap = () => {
   if (!mapInstance.value || !markersGroup.value) return;
   markersGroup.value.clearLayers();
 
   places.value.forEach(place => {
     if (place.lat && place.lng) {
-      let subContent = '';
-      if (place.strategy_data && place.strategy_data.floors && place.strategy_data.floors.length > 0) {
-        subContent = `<div class="popup-floors">`;
-        place.strategy_data.floors.forEach(f => {
-          if(!f.floorName) return;
-          subContent += `<div class="f-name">${f.floorName}</div><div class="f-shops">`;
-          f.shops.forEach(s => {
-            if(s.shopName) subContent += `<span class="s-tag">${s.shopName}</span>`;
-          });
-          subContent += `</div>`;
-        });
-        subContent += `</div>`;
-      }
+      const strategy = parseStrategy(place);
+      const highlightHtml = strategy.highlights.length
+        ? `<div class="cp-chip-row">${strategy.highlights.slice(0, 3).map(h => `<span class="cp-chip">✦ ${h}</span>`).join('')}</div>`
+        : '';
 
       const popupHtml = `
         <div class="custom-popup">
           <div class="cp-head">
             <h4 class="cp-title">${place.name}</h4>
-            <span class="cp-cat">${place.category}</span>
+            <span class="cp-cat" style="background:${catColor(place.category)}22;color:${catColor(place.category)}">${place.category}</span>
           </div>
           ${place.description ? `<p class="cp-desc">${place.description}</p>` : ''}
-          ${subContent}
+          ${highlightHtml}
+          <button type="button" class="cp-detail-btn">查看完整攻略 ➔</button>
         </div>
       `;
 
-      L.marker([place.lat, place.lng]).bindPopup(popupHtml, { minWidth: 200, maxWidth: 260 }).addTo(markersGroup.value);
+      const marker = L.marker([place.lat, place.lng]).bindPopup(popupHtml, { minWidth: 200, maxWidth: 260 });
+      marker.on('popupopen', (e) => {
+        const el = e.popup.getElement();
+        const btn = el && el.querySelector('.cp-detail-btn');
+        if (btn) btn.onclick = () => openDetail(place);
+      });
+      marker.addTo(markersGroup.value);
     }
   });
 };
@@ -354,14 +560,27 @@ const submitNewPlace = async () => {
 
   const cleanedFloors = formData.value.floors.map(f => ({
     floorName: f.floorName,
-    shops: f.shops.filter(s => s.shopName.trim() !== '')
+    shops: f.shops
+      .filter(s => s.shopName.trim() !== '')
+      .map(s => ({ shopName: s.shopName.trim(), price: s.price ? s.price.trim() : '', recommend: !!s.recommend }))
   })).filter(f => f.floorName.trim() !== '' && f.shops.length > 0);
+
+  const highlightsArr = formData.value.highlights.split(/[,，、]/).map(s => s.trim()).filter(Boolean);
+  const tipsText = formData.value.tips.trim();
+
+  let strategy_data = null;
+  if ((formData.value.isComplex && cleanedFloors.length) || highlightsArr.length || tipsText) {
+    strategy_data = {};
+    if (formData.value.isComplex && cleanedFloors.length) strategy_data.floors = cleanedFloors;
+    if (highlightsArr.length) strategy_data.highlights = highlightsArr;
+    if (tipsText) strategy_data.tips = tipsText;
+  }
 
   try {
     const payload = {
       name: formData.value.name, category: formData.value.category, lng: formData.value.lng, lat: formData.value.lat,
       description: formData.value.description, open_hours: formData.value.open_hours, role: currentUserRole.value,
-      strategy_data: formData.value.isComplex ? { floors: cleanedFloors } : null
+      strategy_data
     };
 
     const response = await axios.post('http://localhost:3000/api/places', payload);
@@ -369,12 +588,13 @@ const submitNewPlace = async () => {
       showToast('🎉 数据已写入 PostgreSQL 空间数据库！');
       showForm.value = false;
       resetAllModes();
-      fetchPlaces(); 
+      fetchPlaces();
     }
   } catch (error) { showToast('保存失败'); }
 };
 
 const locateOnMap = (item) => {
+  showDetail.value = false;
   currentTab.value = 'map';
   activeCategory.value = '全部';
   fetchPlaces();
@@ -407,8 +627,9 @@ onMounted(() => {
       formData.value.lat = lat.toFixed(6);
       formData.value.lng = lng.toFixed(6);
       formData.value.name = ''; formData.value.description = ''; formData.value.open_hours = '';
+      formData.value.highlights = ''; formData.value.tips = '';
       formData.value.isComplex = false;
-      formData.value.floors = [{ floorName: '1楼', shops: [{ shopName: '' }] }];
+      formData.value.floors = [emptyFloor()];
 
       removeTempLayers();
       tempMarker.value = L.circleMarker([lat, lng], { color: '#ef4444', radius: 8, fillColor: '#ef4444', fillOpacity: 0.9, weight: 2 }).addTo(mapInstance.value);
@@ -424,22 +645,22 @@ onMounted(() => {
 /* ================== 终极纯正 iOS Native App 视觉规范 (解决高度与白字 Bug) ================== */
 
 /* 1. 基础容器设置：解决桌面端撑满全屏、太丑的问题 */
-html, body { 
-  margin: 0; padding: 0; 
-  width: 100vw; height: 100vh; 
+html, body {
+  margin: 0; padding: 0;
+  width: 100vw; height: 100vh;
   background: #e5e7eb; /* 电脑端显示的高级灰背景 */
   display: flex; align-items: center; justify-content: center;
-  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; 
-  -webkit-font-smoothing: antialiased; user-select: none; 
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased; user-select: none;
 }
 
 #app { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; }
 
 /* 响应式手机壳设计 */
-.native-app-container { 
-  width: 100%; height: 100vh; height: 100dvh; 
-  max-width: 420px; 
-  background: #f2f2f7; display: flex; flex-direction: column; position: relative; 
+.native-app-container {
+  width: 100%; height: 100vh; height: 100dvh;
+  max-width: 420px;
+  background: #f2f2f7; display: flex; flex-direction: column; position: relative;
 }
 
 /* 在电脑上显示为带边框的圆角手机模拟器 */
@@ -478,8 +699,10 @@ html, body {
 
 .glass-filters { position: absolute; top: 12px; left: 12px; right: 12px; z-index: 1000; display: flex; gap: 8px; overflow-x: auto; padding-bottom: 5px; }
 .glass-filters::-webkit-scrollbar { display: none; }
-.filter-chip { background: rgba(255,255,255,0.9); backdrop-filter: blur(10px); padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; color: #3c3c43; box-shadow: 0 2px 8px rgba(0,0,0,0.06); white-space: nowrap; transition: 0.2s; cursor: pointer; }
+.filter-chip { display: flex; align-items: center; gap: 5px; background: rgba(255,255,255,0.9); backdrop-filter: blur(10px); padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; color: #3c3c43; box-shadow: 0 2px 8px rgba(0,0,0,0.06); white-space: nowrap; transition: 0.2s; cursor: pointer; }
 .filter-chip.active { background: #007aff; color: white; }
+.filter-chip.active .chip-dot { background: white !important; }
+.chip-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 
 .side-tools { position: absolute; bottom: 24px; right: 16px; z-index: 1000; display: flex; flex-direction: column; gap: 12px; }
 .tool-btn { display: flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.95); backdrop-filter: blur(10px); border: none; padding: 10px 16px; border-radius: 24px; font-size: 13px; font-weight: 600; color: #3c3c43; box-shadow: 0 4px 12px rgba(0,0,0,0.1); cursor: pointer; transition: 0.2s; }
@@ -488,17 +711,40 @@ html, body {
 .tool-btn.add-active { background: #ef4444; color: white; }
 .tool-icon { font-size: 16px; }
 
-/* 模块二：地点列表 */
+/* 模块二：地点列表 —— "圆周轨迹"卡片 */
 .search-header { padding: 12px 16px; background: #fff; position: sticky; top: 0; z-index: 10; border-bottom: 0.5px solid rgba(0,0,0,0.05); }
 .search-input { width: 100%; background: #e3e3e8; border: none; padding: 10px 14px; border-radius: 10px; font-size: 15px; outline: none; box-sizing: border-box; color: #1f2937; }
 .scroll-list { padding: 16px; padding-bottom: 40px; }
 .empty-state { text-align: center; color: #8e8e93; font-size: 14px; margin-top: 40px; }
-.info-card { background: #fff; border-radius: 16px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.03); }
-.card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-.card-title { margin: 0; font-size: 16px; font-weight: 600; color: #1f2937; }
-.tag-cat { font-size: 11px; background: #f2f2f7; color: #007aff; padding: 3px 8px; border-radius: 6px; font-weight: 600; }
-.card-desc { font-size: 13px; color: #8e8e93; margin: 0 0 12px 0; }
-.card-foot { display: flex; justify-content: space-between; align-items: center; border-top: 0.5px solid #e5e5ea; padding-top: 10px; }
+
+.p-card { background: #fff; border-radius: 18px; padding: 16px; margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.04); cursor: pointer; transition: transform 0.15s ease, box-shadow 0.15s ease; }
+.p-card:active { transform: scale(0.98); box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+.p-card-top { display: flex; align-items: center; gap: 12px; }
+
+/* 圆周轨迹图标：圆形底座 + 缓慢旋转的虚线光环 */
+.p-orbit-icon { position: relative; width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--ring-color) 14%, white); }
+.p-orbit-ring { position: absolute; inset: -4px; border-radius: 50%; border: 1.5px dashed var(--ring-color); opacity: 0.55; animation: orbit-spin 18s linear infinite; }
+.p-orbit-emoji { font-size: 19px; position: relative; z-index: 1; }
+@keyframes orbit-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .p-orbit-ring, .hero-orbit-ring { animation: none !important; } }
+
+.p-card-info { flex: 1; min-width: 0; }
+.p-card-title-row { display: flex; align-items: center; gap: 6px; }
+.p-card-title { margin: 0; font-size: 16px; font-weight: 600; color: #1f2937; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.p-card-sub { font-size: 12px; color: #8e8e93; font-weight: 500; }
+.p-card-chevron { font-size: 20px; color: #c7c7cc; font-weight: 300; }
+
+.p-status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.p-status-dot.ok { background: #34c759; }
+.p-status-dot.busy { background: #ff9500; }
+.p-status-dot.closed { background: #ff3b30; }
+
+.p-card-desc { font-size: 13px; color: #8e8e93; margin: 10px 0 0 0; }
+
+.p-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.p-chip { font-size: 11px; font-weight: 600; color: #007aff; background: #e8f2ff; padding: 3px 9px; border-radius: 20px; }
+
+.card-foot { display: flex; justify-content: space-between; align-items: center; border-top: 0.5px solid #e5e5ea; padding-top: 10px; margin-top: 12px; }
 .card-time { font-size: 12px; color: #8e8e93; }
 .card-action { font-size: 13px; color: #007aff; font-weight: 600; cursor: pointer; }
 
@@ -514,7 +760,7 @@ html, body {
 .bottom-sheet-bg.show { opacity: 1; pointer-events: auto; }
 .bottom-sheet { width: 100%; background: #f2f2f7; border-radius: 20px 20px 0 0; transform: translateY(100%); transition: 0.4s cubic-bezier(0.16, 1, 0.3, 1); display: flex; flex-direction: column; max-height: 85vh; }
 .bottom-sheet-bg.show .bottom-sheet { transform: translateY(0); }
-.drag-bar { width: 36px; height: 5px; background: #c7c7cc; border-radius: 3px; margin: 10px auto; }
+.drag-bar { width: 36px; height: 5px; background: #c7c7cc; border-radius: 3px; margin: 10px auto; flex-shrink: 0; }
 .sheet-header { display: flex; justify-content: space-between; align-items: center; padding: 0 16px 14px 16px; border-bottom: 0.5px solid #e5e5ea; }
 .sheet-title { margin: 0; font-size: 16px; font-weight: 600; color: #1f2937;}
 .action-text { font-size: 16px; font-weight: 500; cursor: pointer; }
@@ -525,29 +771,98 @@ html, body {
 .input-block { background: #fff; border-radius: 12px; overflow: hidden; margin-bottom: 20px; }
 
 /* 🔥 修复点：强制设置所有输入框文本颜色，确保有清晰黑字！ */
-.large-input, .std-input, .floor-name-input, .shop-input { color: #1f2937 !important; background: transparent; }
+.large-input, .std-input, .std-textarea, .floor-name-input, .shop-input, .shop-price-input { color: #1f2937 !important; background: transparent; font-family: inherit; }
 
 .large-input { width: 100%; border: none; border-bottom: 0.5px solid #e5e5ea; padding: 16px; font-size: 16px; font-weight: 600; outline: none; box-sizing: border-box; }
 .row-inputs { display: flex; border-bottom: 0.5px solid #e5e5ea; }
 .std-input { width: 100%; border: none; padding: 14px 16px; font-size: 15px; outline: none; box-sizing: border-box; }
 .row-inputs .std-input:first-child { border-right: 0.5px solid #e5e5ea; }
+.std-input:not(.row-inputs .std-input) { border-bottom: 0.5px solid #e5e5ea; }
+.std-textarea { width: 100%; border: none; padding: 14px 16px; font-size: 14px; outline: none; box-sizing: border-box; resize: none; height: 60px; }
 
 .seg-control { display: flex; background: #e3e3e8; padding: 3px; border-radius: 9px; margin-bottom: 16px; }
-.seg-btn { flex: 1; text-align: center; padding: 8px 0; font-size: 14px; font-weight: 500; color: #8e8e93; border-radius: 7px; transition: 0.2s; }
+.seg-btn { flex: 1; text-align: center; padding: 8px 0; font-size: 14px; font-weight: 500; color: #8e8e93; border-radius: 7px; transition: 0.2s; cursor: pointer; }
 .seg-btn.active { background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); font-weight: 600; color: #1f2937; }
 
 .floor-box { background: #fff; border-radius: 12px; padding: 12px; margin-bottom: 12px; }
 .floor-head { display: flex; justify-content: space-between; align-items: center; border-bottom: 0.5px dashed #e5e5ea; padding-bottom: 8px; margin-bottom: 10px; }
 .floor-name-input { border: none; font-size: 15px; font-weight: 600; color: #007aff !important; outline: none; width: 70%; }
-.del-btn { font-size: 13px; color: #ff3b30; }
-.shop-grid { display: flex; flex-wrap: wrap; gap: 8px; }
-.shop-input { width: calc(50% - 4px); border: 1px solid #e5e5ea; border-radius: 8px; padding: 8px 10px; font-size: 14px; box-sizing: border-box; outline: none; }
-.add-shop-btn { width: calc(50% - 4px); border: 1px dashed #007aff; background: transparent; color: #007aff; border-radius: 8px; font-size: 13px; }
-.add-floor-btn { width: 100%; border: none; background: transparent; color: #007aff; font-size: 15px; font-weight: 600; padding: 10px 0; }
+.del-btn { font-size: 13px; color: #ff3b30; cursor: pointer; }
+.shop-grid { display: flex; flex-direction: column; gap: 8px; }
+.shop-row { display: flex; align-items: center; gap: 6px; }
+.shop-input { flex: 1.4; border: 1px solid #e5e5ea; border-radius: 8px; padding: 8px 10px; font-size: 14px; box-sizing: border-box; outline: none; min-width: 0; }
+.shop-price-input { flex: 1; border: 1px solid #e5e5ea; border-radius: 8px; padding: 8px 10px; font-size: 14px; box-sizing: border-box; outline: none; min-width: 0; }
+.shop-rec-toggle { flex-shrink: 0; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 8px; background: #f2f2f7; opacity: 0.4; cursor: pointer; transition: 0.2s; }
+.shop-rec-toggle.active { background: #fff3e0; opacity: 1; }
+.add-shop-btn { width: 100%; border: 1px dashed #007aff; background: transparent; color: #007aff; border-radius: 8px; font-size: 13px; padding: 8px 0; cursor: pointer; }
+.add-floor-btn { width: 100%; border: none; background: transparent; color: #007aff; font-size: 15px; font-weight: 600; padding: 10px 0; cursor: pointer; }
+
+/* ================= 半屏详情抽屉（点击标记/卡片触发）================= */
+.detail-sheet-bg { position: absolute; inset: 0; background: rgba(0,0,0,0.35); z-index: 2500; opacity: 0; pointer-events: none; transition: 0.3s; display: flex; flex-direction: column; justify-content: flex-end; }
+.detail-sheet-bg.show { opacity: 1; pointer-events: auto; }
+.detail-sheet { width: 100%; height: 58%; background: #fff; border-radius: 22px 22px 0 0; transform: translateY(100%); transition: 0.4s cubic-bezier(0.16, 1, 0.3, 1); display: flex; flex-direction: column; box-shadow: 0 -8px 30px rgba(0,0,0,0.12); }
+.detail-sheet-bg.show .detail-sheet { transform: translateY(0); }
+.detail-scroll { overflow-y: auto; padding: 4px 20px 24px; -webkit-overflow-scrolling: touch; }
+
+.detail-hero { display: flex; align-items: flex-start; gap: 14px; padding: 8px 0 4px; }
+.hero-orbit-icon { position: relative; width: 60px; height: 60px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--ring-color) 16%, white); }
+.hero-orbit-ring { position: absolute; inset: -5px; border-radius: 50%; border: 1.5px dashed var(--ring-color); opacity: 0.6; animation: orbit-spin 18s linear infinite; }
+.hero-orbit-ring.ring-2 { inset: -10px; opacity: 0.3; animation-duration: 26s; animation-direction: reverse; }
+.hero-emoji { font-size: 26px; position: relative; z-index: 1; }
+
+.hero-info { flex: 1; min-width: 0; padding-top: 2px; }
+.hero-title { margin: 0 0 6px 0; font-size: 19px; font-weight: 700; color: #1f2937; }
+.hero-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hero-cat-badge { font-size: 11px; font-weight: 700; color: #fff; padding: 3px 10px; border-radius: 20px; }
+.hero-status { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: #8e8e93; }
+.hero-close { flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%; background: #f2f2f7; color: #8e8e93; display: flex; align-items: center; justify-content: center; font-size: 13px; cursor: pointer; }
+
+.detail-chip-row { display: flex; flex-wrap: wrap; gap: 7px; margin: 14px 0 4px; }
+.detail-chip { font-size: 12px; font-weight: 600; color: #007aff; background: #e8f2ff; padding: 5px 12px; border-radius: 20px; }
+
+.detail-section { margin-top: 20px; }
+.section-label { font-size: 13px; font-weight: 700; color: #1f2937; margin-bottom: 8px; }
+.section-text { font-size: 14px; color: #4b5563; line-height: 1.6; margin: 0; }
+
+.floor-detail-block { background: #f8fafc; border-radius: 12px; padding: 10px 12px; margin-bottom: 8px; }
+.floor-detail-head { font-size: 13px; font-weight: 700; color: #007aff; margin-bottom: 6px; }
+.shop-detail-list { display: flex; flex-direction: column; gap: 6px; }
+.shop-detail-row-wrap { padding: 4px 0; border-bottom: 0.5px dashed #e5e5ea; }
+.shop-detail-row-wrap:last-child { border-bottom: none; }
+.shop-detail-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; color: #1f2937; }
+.shop-detail-name { display: flex; align-items: center; gap: 6px; }
+.shop-detail-price { color: #ff9500; font-weight: 700; }
+.shop-detail-desc { margin: 4px 0 0 0; font-size: 12px; color: #8e8e93; line-height: 1.5; }
+.rec-badge { font-size: 10px; font-weight: 700; color: #ea580c; background: #fff3e0; padding: 2px 6px; border-radius: 8px; }
+
+.price-row { display: flex; justify-content: space-between; font-size: 14px; color: #1f2937; padding: 8px 0; border-bottom: 0.5px solid #f2f2f7; }
+.price-row:last-child { border-bottom: none; }
+.price-value { color: #ff9500; font-weight: 700; }
+
+.peak-hint { font-size: 12px; color: #ea580c; background: #fff7ed; padding: 8px 10px; border-radius: 10px; margin: 8px 0 0; }
+
+/* 分区评测（图书馆座位测评等场景）*/
+.zone-block { padding: 10px 0; border-bottom: 0.5px dashed #e5e5ea; }
+.zone-block:last-child { border-bottom: none; }
+.zone-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.zone-name { font-size: 13px; font-weight: 700; color: #1f2937; }
+.zone-stars { display: flex; gap: 3px; flex-shrink: 0; }
+.zone-dot { width: 9px; height: 9px; border-radius: 50%; border: 1.4px solid #f59e0b; box-sizing: border-box; }
+.zone-dot.full { background: #f59e0b; }
+.zone-dot.half { background: linear-gradient(90deg, #f59e0b 50%, transparent 50%); }
+.zone-dot.empty { background: transparent; opacity: 0.4; }
+.zone-desc { margin: 6px 0 0 0; font-size: 12.5px; color: #6b7280; line-height: 1.6; }
+
+.tips-section { background: #fffbeb; border-radius: 12px; padding: 12px 14px; font-size: 13px; color: #92400e; line-height: 1.6; }
+
+.detail-footer { display: flex; gap: 10px; margin-top: 24px; padding-top: 4px; }
+.detail-fav-btn { flex: 1; border: 1.5px solid #e5e5ea; background: #fff; color: #1f2937; padding: 12px 0; border-radius: 14px; font-size: 14px; font-weight: 600; cursor: pointer; transition: 0.2s; }
+.detail-fav-btn.active { border-color: #ff9500; color: #ff9500; background: #fff7ed; }
+.detail-nav-btn { flex: 1.4; border: none; background: #007aff; color: #fff; padding: 12px 0; border-radius: 14px; font-size: 14px; font-weight: 600; cursor: pointer; }
 
 /* 底部原生导航栏 */
 .native-tabbar { height: 50px; background: rgba(255,255,255,0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-top: 0.5px solid rgba(0,0,0,0.1); display: flex; justify-content: space-around; padding-bottom: env(safe-area-inset-bottom); z-index: 100; flex-shrink: 0; }
-.tab { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: #8e8e93; transition: 0.2s; width: 60px; }
+.tab { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: #8e8e93; transition: 0.2s; width: 60px; cursor: pointer; }
 .tab-icon { font-size: 20px; filter: grayscale(1); opacity: 0.6; }
 .tab span { font-size: 10px; font-weight: 500; }
 .tab.active { color: #007aff; }
@@ -557,12 +872,11 @@ html, body {
 .leaflet-popup-content-wrapper { border-radius: 14px; padding: 0; box-shadow: 0 4px 16px rgba(0,0,0,0.1); }
 .leaflet-popup-content { margin: 0; }
 .custom-popup { padding: 14px; }
-.cp-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.cp-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; gap: 8px; }
 .cp-title { margin: 0; font-size: 15px; font-weight: 600; color: #1f2937; }
-.cp-cat { font-size: 11px; background: #e0f2fe; color: #0284c7; padding: 2px 6px; border-radius: 4px; }
+.cp-cat { font-size: 11px; padding: 2px 8px; border-radius: 6px; font-weight: 700; flex-shrink: 0; }
 .cp-desc { margin: 0 0 10px 0; font-size: 12px; color: #8e8e93; }
-.popup-floors { background: #f2f2f7; border-radius: 8px; padding: 8px; max-height: 140px; overflow-y: auto; }
-.f-name { font-size: 12px; font-weight: 600; color: #1f2937; margin: 4px 0; }
-.f-shops { display: flex; flex-wrap: wrap; gap: 4px; }
-.s-tag { background: #fff; border: 0.5px solid #e5e5ea; border-radius: 4px; padding: 2px 6px; font-size: 11px; color: #3c3c43; }
+.cp-chip-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
+.cp-chip { font-size: 10px; font-weight: 600; color: #007aff; background: #e8f2ff; padding: 2px 8px; border-radius: 10px; }
+.cp-detail-btn { width: 100%; border: none; background: #007aff; color: #fff; padding: 9px 0; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; }
 </style>

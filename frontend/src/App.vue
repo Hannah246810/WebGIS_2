@@ -2,7 +2,7 @@
   <div class="native-app-container">
     <header class="native-header">
       <div class="header-content">
-        <h1 class="app-title">HHU校园攻略</h1>
+        <h1 class="app-title">HHU 校园攻略</h1>
         <div :class="['role-indicator', currentUserRole]">
           <span class="pulse-dot"></span>
           {{ roleNameMap[currentUserRole] }}
@@ -16,6 +16,7 @@
 
     <main class="native-content">
 
+      <!-- ===== 地图 Tab ===== -->
       <div id="map-wrapper" :class="{ 'hidden-view': currentTab !== 'map' }">
         <div id="map"></div>
 
@@ -42,13 +43,14 @@
             <span class="tool-label">{{ isRadarMode ? '关闭雷达' : '周边雷达' }}</span>
           </button>
 
-          <button v-if="currentUserRole === 'admin'" :class="['tool-btn', 'admin-btn', isAddMode ? 'add-active' : '']" @click="toggleAddMode">
+          <button v-if="currentUserRole === 'student' || currentUserRole === 'admin'"  :class="['tool-btn', 'admin-btn', isAddMode ? 'add-active' : '']" @click="toggleAddMode">
             <span class="tool-icon">{{ isAddMode ? '✖' : '➕' }}</span>
             <span class="tool-label">{{ isAddMode ? '取消选点' : '新增攻略' }}</span>
           </button>
         </div>
       </div>
 
+      <!-- ===== 攻略列表 Tab ===== -->
       <div v-if="currentTab === 'info'" class="native-view bg-light">
         <div class="search-header">
           <input type="text" v-model="searchKeyword" @input="fetchPlaces" placeholder="搜索地点或设施..." class="search-input" />
@@ -86,17 +88,135 @@
         </div>
       </div>
 
-      <div v-if="currentTab === 'user'" class="native-view bg-light flex-center">
-        <div class="profile-card">
+      <!-- ===== 我的 Tab ===== -->
+      <div v-if="currentTab === 'user'" class="native-view bg-light" style="display:flex; flex-direction:column; align-items:center; padding-top:20px; overflow-y:auto;">
+
+        <!-- 用户卡片 -->
+        <div class="profile-card" style="width:85%; max-width:400px; flex-shrink:0;">
           <div class="avatar-box"></div>
           <h2 class="profile-title">系统登录</h2>
           <div class="form-group">
             <select v-model="tempSelectedRole" class="native-select">
-              <option value="guest">游客身份</option>
               <option value="student">河海学生</option>
               <option value="admin">系统管理员</option>
             </select>
             <button class="primary-btn" @click="handleLogin">切换身份</button>
+          </div>
+        </div>
+
+        <!-- ===== 学生专属：我的收藏 & 我的贡献 ===== -->
+        <template v-if="currentUserRole === 'student'">
+          <!-- 我的收藏 -->
+          <div class="my-section" style="width:100%; padding:0 16px 16px; box-sizing:border-box;">
+            <div class="section-header">
+              <h3 class="section-title">⭐ 我的收藏</h3>
+              <span class="section-count">{{ favorites.length }} 个</span>
+            </div>
+            <div v-if="loadingFavorites" class="section-loading">加载中...</div>
+            <div v-else-if="favorites.length === 0" class="section-empty">暂无收藏</div>
+            <div v-else>
+              <div v-for="item in favorites" :key="item.place_id" class="my-card" @click="openDetail(item)">
+                <div class="my-card-left">
+                  <span class="my-card-name">{{ item.name }}</span>
+                  <span class="my-card-cat">{{ item.category }}</span>
+                </div>
+                <button class="my-card-unfav" @click.stop="removeFavorite(item.place_id)">✕</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 我的贡献 -->
+          <div class="my-section" style="width:100%; padding:0 16px 16px; box-sizing:border-box;">
+            <div class="section-header">
+              <h3 class="section-title">📝 我的贡献</h3>
+              <span class="section-count">{{ contributions.places.length }} 个地点</span>
+            </div>
+            <div v-if="loadingContributions" class="section-loading">加载中...</div>
+            <div v-else-if="contributions.places.length === 0" class="section-empty">暂无贡献</div>
+            <div v-else>
+              <div v-for="item in contributions.places" :key="item.place_id" class="my-card" @click="openDetail(item)">
+                <div class="my-card-left">
+                  <span class="my-card-name">{{ item.name }}</span>
+                  <span class="my-card-cat">{{ item.category }}</span>
+                </div>
+                <span class="my-card-status" :class="item.is_approved ? 'approved' : 'pending'">
+                  {{ item.is_approved ? '✅ 已上线' : '⏳ 待审核' }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <!-- ===== 管理员专属：审核中心（含 Tab） ===== -->
+        <div v-if="currentUserRole === 'admin'" class="audit-center" style="width:100%; flex:1; padding:0 16px 16px; overflow-y:auto;">
+          
+          <!-- Tab 切换 -->
+          <div class="audit-tabs">
+            <div :class="['audit-tab', auditTab === 'pending' ? 'active' : '']" 
+                 @click="auditTab = 'pending'; fetchPendingPlaces();">
+              待审核 <span class="tab-badge">{{ pendingPlaces.length }}</span>
+            </div>
+            <div :class="['audit-tab', auditTab === 'approved' ? 'active' : '']" 
+                 @click="auditTab = 'approved'; fetchApprovedPlaces();">
+              已上线 <span class="tab-badge">{{ approvedPlaces.length }}</span>
+            </div>
+          </div>
+
+          <!-- ===== 待审核列表 ===== -->
+          <div v-if="auditTab === 'pending'">
+            <div v-if="loadingPending" class="audit-loading">加载中...</div>
+            <div v-else-if="pendingPlaces.length === 0" class="audit-empty">🎉 暂无待审核内容</div>
+            <div v-else>
+              <div v-for="item in pendingPlaces" :key="item.place_id" class="audit-card">
+                <div class="audit-card-header">
+                  <div class="audit-card-info">
+                    <span class="audit-card-name">{{ item.name }}</span>
+                    <span class="audit-card-cat">{{ item.category }}</span>
+                  </div>
+                  <span class="audit-card-time">{{ formatTime(item.created_at) }}</span>
+                </div>
+                <div class="audit-card-body">
+                  <p class="audit-card-desc">{{ item.description || '暂无描述' }}</p>
+                  <div class="audit-card-meta">
+                    <span>📍 {{ item.lng?.toFixed(6) }}, {{ item.lat?.toFixed(6) }}</span>
+                    <span>👤 {{ item.submitted_by || '匿名用户' }}</span>
+                  </div>
+                </div>
+                <div class="audit-card-actions">
+                  <button class="audit-btn approve" @click="approvePlace(item.place_id)">✅ 批准上线</button>
+                  <button class="audit-btn reject" @click="rejectPlace(item.place_id)">❌ 驳回</button>
+                  <button class="audit-btn delete" @click="deletePlace(item.place_id)">🗑️ 删除</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ===== 已上线列表 ===== -->
+          <div v-if="auditTab === 'approved'">
+            <div v-if="loadingApproved" class="audit-loading">加载中...</div>
+            <div v-else-if="approvedPlaces.length === 0" class="audit-empty">📭 暂无已上线地点</div>
+            <div v-else>
+              <div v-for="item in approvedPlaces" :key="item.place_id" class="audit-card">
+                <div class="audit-card-header">
+                  <div class="audit-card-info">
+                    <span class="audit-card-name">{{ item.name }}</span>
+                    <span class="audit-card-cat">{{ item.category }}</span>
+                    <span class="audit-card-status approved">✅ 已上线</span>
+                  </div>
+                  <span class="audit-card-time">{{ formatTime(item.created_at) }}</span>
+                </div>
+                <div class="audit-card-body">
+                  <p class="audit-card-desc">{{ item.description || '暂无描述' }}</p>
+                  <div class="audit-card-meta">
+                    <span>📍 {{ item.lng?.toFixed(6) }}, {{ item.lat?.toFixed(6) }}</span>
+                    <span>👤 {{ item.submitted_by || '匿名用户' }}</span>
+                  </div>
+                </div>
+                <div class="audit-card-actions">
+                  <button class="audit-btn delete" @click="deletePlace(item.place_id)">🗑️ 删除</button>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -275,7 +395,6 @@
 <script setup>
 import { onMounted, ref, computed, nextTick } from 'vue';
 import * as L from 'leaflet';
-// 绑定到 window 以防 heatmap 插件找不到 L
 window.L = L;
 import 'leaflet.heat';
 import axios from 'axios';
@@ -284,7 +403,7 @@ import axios from 'axios';
 const categories = ['全部', '餐饮', '快递', '学习', '生活', '交通', '其他'];
 const roleNameMap = { guest: '游客', student: '河海学生', admin: '管理员' };
 
-// 分类 -> 图标/主题色映射（用于圆周轨迹图标与标签配色）
+// 分类 -> 图标/主题色映射
 const categoryMeta = {
   '餐饮': { icon: '🍜', color: '#f97316' },
   '快递': { icon: '📦', color: '#0ea5e9' },
@@ -300,7 +419,6 @@ const statusClass = (tag) => {
   if (tag === '今日休息') return 'closed';
   return 'ok';
 };
-// 五分制星级 -> 圆点填充状态（满/半/空），呼应"圆周轨迹"视觉语言
 const dotClass = (rating, n) => {
   const r = Number(rating) || 0;
   if (r >= n) return 'full';
@@ -316,7 +434,7 @@ const places = ref([]);
 const searchKeyword = ref('');
 const activeCategory = ref('全部');
 
-// GIS空间分析与操作状态
+// GIS操作状态
 const isAddMode = ref(false);
 const isRadarMode = ref(false);
 const isHeatmapMode = ref(false);
@@ -324,7 +442,7 @@ const isHeatmapMode = ref(false);
 const toastVisible = ref(false);
 const toastMessage = ref('');
 
-// 表单响应式数据
+// 表单数据
 const showForm = ref(false);
 const emptyFloor = () => ({ floorName: '1楼', shops: [{ shopName: '', price: '', recommend: false }] });
 const formData = ref({
@@ -333,30 +451,19 @@ const formData = ref({
   isComplex: false, floors: [emptyFloor()],
 });
 
-// 详情抽屉状态
+// 详情抽屉
 const showDetail = ref(false);
 const selectedPlace = ref(null);
 
-// 本地收藏（登录态学生/管理员可用，纯前端持久化，无需后端接口）
-const favoriteIds = ref(new Set());
-try {
-  favoriteIds.value = new Set(JSON.parse(localStorage.getItem('hhu_favorite_ids') || '[]'));
-} catch (e) { /* 忽略解析失败 */ }
+// ========== 收藏功能（后端数据库） ==========
+const favorites = ref([]);
+const loadingFavorites = ref(false);
 
-const isFav = computed(() => !!selectedPlace.value && favoriteIds.value.has(selectedPlace.value.place_id));
+// ========== 我的贡献 ==========
+const contributions = ref({ places: [], edits: [], notes: [] });
+const loadingContributions = ref(false);
 
-const toggleFavorite = () => {
-  if (!selectedPlace.value) return;
-  if (currentUserRole.value === 'guest') { showToast('游客暂不能收藏，请先切换身份'); return; }
-  const id = selectedPlace.value.place_id;
-  const next = new Set(favoriteIds.value);
-  if (next.has(id)) { next.delete(id); showToast('已取消收藏'); }
-  else { next.add(id); showToast('⭐ 已加入收藏'); }
-  favoriteIds.value = next;
-  try { localStorage.setItem('hhu_favorite_ids', JSON.stringify([...next])); } catch (e) { /* 忽略 */ }
-};
-
-// 统一解析 content_json（strategy_data），兼容不同类别的攻略结构
+// 解析攻略
 const parseStrategy = (item) => {
   const raw = item && item.strategy_data;
   if (!raw || typeof raw !== 'object') {
@@ -376,11 +483,230 @@ const parseStrategy = (item) => {
 const getStrategy = (item) => parseStrategy(item);
 const detail = computed(() => parseStrategy(selectedPlace.value || {}));
 
+// 收藏状态（基于后端数据）
+const isFav = computed(() => {
+  if (!selectedPlace.value) return false;
+  return favorites.value.some(f => f.place_id === selectedPlace.value.place_id);
+});
+
 const mapInstance = ref(null);
 const markersGroup = ref(null);
 const tempMarker = ref(null);
 const bufferCircle = ref(null);
-const heatLayer = ref(null); // 热力图图层
+const heatLayer = ref(null);
+
+// ========== 审核中心相关 ==========
+const pendingPlaces = ref([]);
+const loadingPending = ref(false);
+
+// ========== 审核中心 Tab ==========
+const auditTab = ref('pending');
+
+// ========== 已上线地点管理 ==========
+const approvedPlaces = ref([]);
+const loadingApproved = ref(false);
+
+const fetchPendingPlaces = async () => {
+  console.log('🔍 进入 fetchPendingPlaces，当前角色:', currentUserRole.value);
+  if (currentUserRole.value !== 'admin') {
+    console.log('❌ 不是管理员，不加载');
+    return;
+  }
+  loadingPending.value = true;
+  try {
+    const headers = { 'X-User-Role': 'admin' };
+    console.log('📤 请求头:', headers);
+    const response = await axios.get('http://localhost:3000/api/admin/pending', { headers });
+    console.log('✅ 响应成功:', response.status, response.data);
+    if (response.data.success) {
+      pendingPlaces.value = response.data.data;
+      console.log('📋 待审核列表:', pendingPlaces.value);
+    }
+  } catch (error) {
+    console.error('❌ 请求失败:', error);
+    if (error.response) {
+      console.error('状态码:', error.response.status);
+      console.error('响应数据:', error.response.data);
+    }
+  } finally {
+    loadingPending.value = false;
+  }
+};
+
+const fetchApprovedPlaces = async () => {
+  loadingApproved.value = true;
+  try {
+    const response = await axios.get('http://localhost:3000/api/admin/approved', {
+      headers: { 'X-User-Role': 'admin' }
+    });
+    if (response.data.success) {
+      approvedPlaces.value = response.data.data;
+    }
+  } catch (error) {
+    console.error('获取已上线列表失败:', error);
+  } finally {
+    loadingApproved.value = false;
+  }
+};
+
+const approvePlace = async (placeId) => {
+  try {
+    const response = await axios.put(
+      `http://localhost:3000/api/admin/approve/${placeId}`,
+      {},
+      { headers: { 'X-User-Role': 'admin' } }
+    );
+    if (response.data.success) {
+      showToast('✅ 已批准上线');
+      fetchPendingPlaces();
+      fetchApprovedPlaces();
+      fetchPlaces();
+    }
+  } catch (error) {
+    showToast('批准失败');
+  }
+};
+
+const rejectPlace = async (placeId) => {
+  if (!confirm('确定要驳回并删除这个地点吗？')) return;
+  try {
+    const response = await axios.delete(
+      `http://localhost:3000/api/admin/reject/${placeId}`,
+      { headers: { 'X-User-Role': 'admin' } }
+    );
+    if (response.data.success) {
+      showToast('❌ 已驳回删除');
+      fetchPendingPlaces();
+      fetchApprovedPlaces();
+      fetchPlaces();
+    }
+  } catch (error) {
+    showToast('驳回失败');
+  }
+};
+
+// ========== 删除地点（待审核或已上线均可） ==========
+const deletePlace = async (placeId) => {
+  if (!confirm('确定要删除这个地点吗？此操作不可恢复！')) return;
+  try {
+    const response = await axios.delete(
+      `http://localhost:3000/api/admin/places/${placeId}`,
+      { headers: { 'X-User-Role': 'admin' } }
+    );
+    if (response.data.success) {
+      showToast('🗑️ 已删除地点');
+      fetchPendingPlaces();
+      fetchApprovedPlaces();
+      fetchPlaces();
+    }
+  } catch (error) {
+    console.error('删除失败:', error);
+    if (error.response) {
+      console.error('状态码:', error.response.status);
+      console.error('响应数据:', error.response.data);
+    }
+    showToast('删除失败');
+  }
+};
+
+const formatTime = (timestamp) => {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  return date.toLocaleString('zh-CN', { hour12: false });
+};
+
+// ========== 收藏功能方法 ==========
+const fetchFavorites = async () => {
+  if (currentUserRole.value === 'guest') {
+    favorites.value = [];
+    return;
+  }
+  loadingFavorites.value = true;
+  try {
+    const response = await axios.get('http://localhost:3000/api/user/favorites', {
+      headers: { 'X-User-Role': currentUserRole.value }
+    });
+    if (response.data.success) {
+      favorites.value = response.data.data;
+    }
+  } catch (error) {
+    console.error('获取收藏列表失败:', error);
+  } finally {
+    loadingFavorites.value = false;
+  }
+};
+
+const addFavorite = async (placeId) => {
+  try {
+    const response = await axios.post('http://localhost:3000/api/user/favorites', 
+      { place_id: placeId },
+      { headers: { 'X-User-Role': currentUserRole.value } }
+    );
+    if (response.data.success) {
+      showToast('⭐ 已收藏');
+      fetchFavorites();
+    }
+  } catch (error) {
+    showToast('收藏失败');
+  }
+};
+
+const removeFavorite = async (placeId) => {
+  try {
+    const response = await axios.delete(`http://localhost:3000/api/user/favorites/${placeId}`, {
+      headers: { 'X-User-Role': currentUserRole.value }
+    });
+    if (response.data.success) {
+      showToast('已取消收藏');
+      fetchFavorites();
+    }
+  } catch (error) {
+    showToast('取消收藏失败');
+  }
+};
+
+// ========== 我的贡献方法 ==========
+const fetchContributions = async () => {
+  if (currentUserRole.value === 'guest') {
+    contributions.value = { places: [], edits: [], notes: [] };
+    return;
+  }
+  loadingContributions.value = true;
+  try {
+    const response = await axios.get('http://localhost:3000/api/user/contributions', {
+      headers: { 'X-User-Role': currentUserRole.value }
+    });
+    console.log('📥 贡献数据响应:', response.data);
+    if (response.data.success) {
+      contributions.value = response.data.data;
+      console.log('📊 贡献数据:', contributions.value);
+    }
+  } catch (error) {
+    console.error('获取贡献列表失败:', error);
+    if (error.response) {
+      console.error('状态码:', error.response.status);
+      console.error('响应数据:', error.response.data);
+    }
+  } finally {
+    loadingContributions.value = false;
+  }
+};
+
+// ========== 收藏切换 ==========
+const toggleFavorite = () => {
+  if (!selectedPlace.value) return;
+  if (currentUserRole.value === 'guest') { 
+    showToast('游客暂不能收藏，请先切换身份'); 
+    return; 
+  }
+  const id = selectedPlace.value.place_id;
+  const isFav = favorites.value.some(f => f.place_id === id);
+  if (isFav) {
+    removeFavorite(id);
+  } else {
+    addFavorite(id);
+  }
+};
 
 // --- 交互逻辑 ---
 const showToast = (msg) => {
@@ -393,6 +719,15 @@ const switchTab = (tabName) => {
   currentTab.value = tabName;
   if (tabName === 'map') {
     nextTick(() => { if (mapInstance.value) mapInstance.value.invalidateSize(); });
+  } else if (tabName === 'user') {
+    // 切换到“我的”时加载数据
+    fetchFavorites();
+    fetchContributions();
+    if (currentUserRole.value === 'admin') {
+      fetchPendingPlaces();
+      fetchApprovedPlaces();
+    }
+    resetAllModes();
   } else {
     resetAllModes();
   }
@@ -401,6 +736,13 @@ const switchTab = (tabName) => {
 const handleLogin = () => {
   currentUserRole.value = tempSelectedRole.value;
   showToast(`欢迎, ${roleNameMap[currentUserRole.value]}`);
+  // 加载用户数据
+  fetchFavorites();
+  fetchContributions();
+  if (currentUserRole.value === 'admin') {
+    fetchPendingPlaces();
+    fetchApprovedPlaces();
+  }
   switchTab('map');
 };
 
@@ -409,7 +751,7 @@ const resetAllModes = () => {
   isRadarMode.value = false;
   isHeatmapMode.value = false;
   removeTempLayers();
-}
+};
 
 const toggleAddMode = () => {
   isAddMode.value = !isAddMode.value;
@@ -427,7 +769,6 @@ const toggleRadarMode = () => {
   if (isRadarMode.value) showToast('📡 缓冲区分析已开启：点击地图探测周边200m设施');
 };
 
-// --- GIS 空间分析：热力图 ---
 const toggleHeatmap = () => {
   isHeatmapMode.value = !isHeatmapMode.value;
   isAddMode.value = false;
@@ -435,21 +776,14 @@ const toggleHeatmap = () => {
   removeTempLayers();
 
   if (isHeatmapMode.value) {
-    // 隐藏普通图标
     if (markersGroup.value) mapInstance.value.removeLayer(markersGroup.value);
-
-    // 提取坐标数据 [lat, lng, intensity]
     const heatData = places.value.filter(p => p.lat && p.lng).map(p => [parseFloat(p.lat), parseFloat(p.lng), 1]);
-
-    // 渲染热力图层
     heatLayer.value = L.heatLayer(heatData, {
       radius: 25, blur: 15, maxZoom: 17,
       gradient: { 0.4: 'blue', 0.6: 'cyan', 0.7: 'lime', 0.8: 'yellow', 1.0: 'red' }
     }).addTo(mapInstance.value);
-
     showToast('🔥 热力图已开启：颜色越暖代表设施越密集');
   } else {
-    // 恢复普通图标
     if (markersGroup.value) mapInstance.value.addLayer(markersGroup.value);
   }
 };
@@ -483,17 +817,20 @@ const removeTempLayers = () => {
 const filterByCategory = (cat) => {
   activeCategory.value = cat;
   fetchPlaces();
-  if (isHeatmapMode.value) { // 如果在热力图模式下切换分类，重绘热力图
+  if (isHeatmapMode.value) {
     toggleHeatmap();
     setTimeout(toggleHeatmap, 50);
   }
 };
 
+// ---------- 网络请求 ----------
 const fetchPlaces = async () => {
   try {
     let url = `http://localhost:3000/api/places?keyword=${searchKeyword.value}`;
     if (activeCategory.value !== '全部') url += `&category=${activeCategory.value}`;
-    const response = await axios.get(url);
+    const response = await axios.get(url, {
+      headers: { 'X-User-Role': currentUserRole.value }
+    });
     places.value = response.data;
     renderMarkersOnMap();
   } catch (error) {
@@ -501,7 +838,6 @@ const fetchPlaces = async () => {
   }
 };
 
-// --- GIS 空间缓冲分析 ---
 const executeBufferAnalysis = (lat, lng) => {
   removeTempLayers();
   bufferCircle.value = L.circle([lat, lng], {
@@ -515,12 +851,10 @@ const executeBufferAnalysis = (lat, lng) => {
       if (distance <= 200) count++;
     }
   });
-
   showToast(`📍 探测完成：200米生活圈内共有 ${count} 个便民设施`);
   mapInstance.value.fitBounds(bufferCircle.value.getBounds(), { padding: [50, 50] });
 };
 
-// --- 地图渲染与精美弹窗（点击"查看完整攻略"打开半屏详情抽屉） ---
 const renderMarkersOnMap = () => {
   if (!mapInstance.value || !markersGroup.value) return;
   markersGroup.value.clearLayers();
@@ -579,18 +913,22 @@ const submitNewPlace = async () => {
   try {
     const payload = {
       name: formData.value.name, category: formData.value.category, lng: formData.value.lng, lat: formData.value.lat,
-      description: formData.value.description, open_hours: formData.value.open_hours, role: currentUserRole.value,
+      description: formData.value.description, open_hours: formData.value.open_hours,
       strategy_data
     };
 
-    const response = await axios.post('http://localhost:3000/api/places', payload);
+    const response = await axios.post('http://localhost:3000/api/places', payload, {
+      headers: { 'X-User-Role': currentUserRole.value }
+    });
     if (response.data.success) {
-      showToast('🎉 数据已写入 PostgreSQL 空间数据库！');
+      showToast('🎉 提交成功！' + (response.data.is_approved ? ' 已上线' : ' 等待管理员审核'));
       showForm.value = false;
       resetAllModes();
       fetchPlaces();
     }
-  } catch (error) { showToast('保存失败'); }
+  } catch (error) {
+    showToast('保存失败');
+  }
 };
 
 const locateOnMap = (item) => {
@@ -606,6 +944,7 @@ const locateOnMap = (item) => {
   });
 };
 
+// --- 生命周期 ---
 onMounted(() => {
   mapInstance.value = L.map('map', { center: [31.9242, 118.7905], zoom: 16, zoomControl: false });
   L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}', {
@@ -623,7 +962,7 @@ onMounted(() => {
       return;
     }
 
-    if (isAddMode.value && currentUserRole.value === 'admin') {
+    if (isAddMode.value && (currentUserRole.value === 'student' || currentUserRole.value === 'admin')) {
       formData.value.lat = lat.toFixed(6);
       formData.value.lng = lng.toFixed(6);
       formData.value.name = ''; formData.value.description = ''; formData.value.open_hours = '';
@@ -638,17 +977,21 @@ onMounted(() => {
   });
 
   fetchPlaces();
+  fetchFavorites();
+  fetchContributions();
+  if (currentUserRole.value === 'admin') {
+    fetchPendingPlaces();
+    fetchApprovedPlaces();
+  }
 });
 </script>
 
 <style>
-/* ================== 终极纯正 iOS Native App 视觉规范 (解决高度与白字 Bug) ================== */
-
-/* 1. 基础容器设置：解决桌面端撑满全屏、太丑的问题 */
+/* ================== 基础样式 ================== */
 html, body {
   margin: 0; padding: 0;
   width: 100vw; height: 100vh;
-  background: #e5e7eb; /* 电脑端显示的高级灰背景 */
+  background: #e5e7eb;
   display: flex; align-items: center; justify-content: center;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
   -webkit-font-smoothing: antialiased; user-select: none;
@@ -656,50 +999,87 @@ html, body {
 
 #app { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; }
 
-/* 响应式手机壳设计 */
 .native-app-container {
   width: 100%; height: 100vh; height: 100dvh;
   max-width: 420px;
   background: #f2f2f7; display: flex; flex-direction: column; position: relative;
 }
 
-/* 在电脑上显示为带边框的圆角手机模拟器 */
 @media (min-width: 480px) {
   .native-app-container {
     height: 850px; max-height: 90vh;
     border-radius: 40px;
     box-shadow: 0 24px 48px rgba(0,0,0,0.15);
-    border: 10px solid #1f2937; /* 模拟手机黑边 */
+    border: 10px solid #1f2937;
     overflow: hidden;
   }
 }
 
-/* 顶部 Header */
+/* ===== 顶部 Header ===== */
 .native-header { height: 50px; background: rgba(255, 255, 255, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-bottom: 0.5px solid rgba(0,0,0,0.1); z-index: 100; flex-shrink: 0; }
-.header-content { display: flex; justify-content: space-between; align-items: center; height: 100%; padding: 0 16px; }
-.app-title { font-size: 17px; font-weight: 600; color: #1f2937; margin: 0; }
-.role-indicator { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 12px; background: #e5e5ea; color: #8e8e93; }
+.header-content { display: flex; justify-content: space-between; align-items: center; height: 100%; padding: 0 16px; gap: 12px; }
+
+.app-title {
+  font-size: 17px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 0;
+  padding: 4px 0;
+  letter-spacing: 0.8px;
+  white-space: nowrap;
+}
+
+.role-indicator { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; padding: 4px 10px; border-radius: 12px; background: #e5e5ea; color: #8e8e93; flex-shrink: 0; }
 .role-indicator.admin { background: #e0f2fe; color: #0284c7; }
 .role-indicator.student { background: #dcfce7; color: #166534; }
 .pulse-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
-/* 全局 Toast */
 .native-toast { position: absolute; top: 60px; left: 50%; transform: translateX(-50%) translateY(-20px) scale(0.95); background: rgba(0,0,0,0.8); color: white; padding: 10px 20px; border-radius: 20px; font-size: 14px; font-weight: 500; opacity: 0; pointer-events: none; transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1); z-index: 9999; box-shadow: 0 4px 12px rgba(0,0,0,0.15); white-space: nowrap; }
 .native-toast.show { opacity: 1; transform: translateX(-50%) translateY(0) scale(1); }
 
-/* 主体视窗 (锁定高度防超出) */
 .native-content { flex: 1; position: relative; overflow: hidden; width: 100%; }
 .native-view { position: absolute; inset: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .bg-light { background: #f2f2f7; }
 .flex-center { display: flex; align-items: center; justify-content: center; }
 
-/* 模块一：地图与工具 */
+/* ===== 地图与工具 ===== */
 #map-wrapper, #map { width: 100%; height: 100%; position: absolute; inset: 0; }
 .hidden-view { opacity: 0; pointer-events: none; }
 
-.glass-filters { position: absolute; top: 12px; left: 12px; right: 12px; z-index: 1000; display: flex; gap: 8px; overflow-x: auto; padding-bottom: 5px; }
+.glass-filters {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 1000;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 4px 10px 4px;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  box-sizing: border-box;
+  min-width: 0;
+}
 .glass-filters::-webkit-scrollbar { display: none; }
-.filter-chip { display: flex; align-items: center; gap: 5px; background: rgba(255,255,255,0.9); backdrop-filter: blur(10px); padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; color: #3c3c43; box-shadow: 0 2px 8px rgba(0,0,0,0.06); white-space: nowrap; transition: 0.2s; cursor: pointer; }
+.filter-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(255,255,255,0.9);
+  backdrop-filter: blur(10px);
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #3c3c43;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  white-space: nowrap;
+  transition: 0.2s;
+  cursor: pointer;
+  flex-shrink: 0;
+}
 .filter-chip.active { background: #007aff; color: white; }
 .filter-chip.active .chip-dot { background: white !important; }
 .chip-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
@@ -711,7 +1091,7 @@ html, body {
 .tool-btn.add-active { background: #ef4444; color: white; }
 .tool-icon { font-size: 16px; }
 
-/* 模块二：地点列表 —— "圆周轨迹"卡片 */
+/* ===== 攻略列表 ===== */
 .search-header { padding: 12px 16px; background: #fff; position: sticky; top: 0; z-index: 10; border-bottom: 0.5px solid rgba(0,0,0,0.05); }
 .search-input { width: 100%; background: #e3e3e8; border: none; padding: 10px 14px; border-radius: 10px; font-size: 15px; outline: none; box-sizing: border-box; color: #1f2937; }
 .scroll-list { padding: 16px; padding-bottom: 40px; }
@@ -721,7 +1101,6 @@ html, body {
 .p-card:active { transform: scale(0.98); box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
 .p-card-top { display: flex; align-items: center; gap: 12px; }
 
-/* 圆周轨迹图标：圆形底座 + 缓慢旋转的虚线光环 */
 .p-orbit-icon { position: relative; width: 44px; height: 44px; border-radius: 50%; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: color-mix(in srgb, var(--ring-color) 14%, white); }
 .p-orbit-ring { position: absolute; inset: -4px; border-radius: 50%; border: 1.5px dashed var(--ring-color); opacity: 0.55; animation: orbit-spin 18s linear infinite; }
 .p-orbit-emoji { font-size: 19px; position: relative; z-index: 1; }
@@ -740,7 +1119,6 @@ html, body {
 .p-status-dot.closed { background: #ff3b30; }
 
 .p-card-desc { font-size: 13px; color: #8e8e93; margin: 10px 0 0 0; }
-
 .p-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .p-chip { font-size: 11px; font-weight: 600; color: #007aff; background: #e8f2ff; padding: 3px 9px; border-radius: 20px; }
 
@@ -748,14 +1126,14 @@ html, body {
 .card-time { font-size: 12px; color: #8e8e93; }
 .card-action { font-size: 13px; color: #007aff; font-weight: 600; cursor: pointer; }
 
-/* 模块三：用户中心 */
+/* ===== 用户中心 ===== */
 .profile-card { background: #fff; border-radius: 20px; width: 85%; padding: 30px 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.05); text-align: center; }
 .avatar-box { width: 70px; height: 70px; background: #e5e5ea; border-radius: 50%; margin: 0 auto 16px auto; background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="%238e8e93"><path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"/></svg>'); background-size: 60%; background-repeat: no-repeat; background-position: center; }
 .profile-title { font-size: 18px; font-weight: 600; margin: 0 0 24px 0; color: #1f2937; }
 .native-select { width: 100%; background: #f2f2f7; border: none; padding: 14px; border-radius: 12px; font-size: 16px; margin-bottom: 16px; outline: none; -webkit-appearance: none; text-align: center; color: #007aff; font-weight: 600; }
 .primary-btn { width: 100%; background: #007aff; color: white; border: none; padding: 14px; border-radius: 12px; font-size: 16px; font-weight: 600; cursor: pointer; }
 
-/* ================= Bottom Sheet 表单 & 修复字体白化问题 ================= */
+/* ================= Bottom Sheet ================= */
 .bottom-sheet-bg { position: absolute; inset: 0; background: rgba(0,0,0,0.3); z-index: 2000; opacity: 0; pointer-events: none; transition: 0.3s; display: flex; flex-direction: column; justify-content: flex-end; }
 .bottom-sheet-bg.show { opacity: 1; pointer-events: auto; }
 .bottom-sheet { width: 100%; background: #f2f2f7; border-radius: 20px 20px 0 0; transform: translateY(100%); transition: 0.4s cubic-bezier(0.16, 1, 0.3, 1); display: flex; flex-direction: column; max-height: 85vh; }
@@ -769,10 +1147,7 @@ html, body {
 .sheet-scroll-body { overflow-y: auto; padding: 16px; -webkit-overflow-scrolling: touch; }
 
 .input-block { background: #fff; border-radius: 12px; overflow: hidden; margin-bottom: 20px; }
-
-/* 🔥 修复点：强制设置所有输入框文本颜色，确保有清晰黑字！ */
 .large-input, .std-input, .std-textarea, .floor-name-input, .shop-input, .shop-price-input { color: #1f2937 !important; background: transparent; font-family: inherit; }
-
 .large-input { width: 100%; border: none; border-bottom: 0.5px solid #e5e5ea; padding: 16px; font-size: 16px; font-weight: 600; outline: none; box-sizing: border-box; }
 .row-inputs { display: flex; border-bottom: 0.5px solid #e5e5ea; }
 .std-input { width: 100%; border: none; padding: 14px 16px; font-size: 15px; outline: none; box-sizing: border-box; }
@@ -797,7 +1172,7 @@ html, body {
 .add-shop-btn { width: 100%; border: 1px dashed #007aff; background: transparent; color: #007aff; border-radius: 8px; font-size: 13px; padding: 8px 0; cursor: pointer; }
 .add-floor-btn { width: 100%; border: none; background: transparent; color: #007aff; font-size: 15px; font-weight: 600; padding: 10px 0; cursor: pointer; }
 
-/* ================= 半屏详情抽屉（点击标记/卡片触发）================= */
+/* ================= 详情抽屉 ================= */
 .detail-sheet-bg { position: absolute; inset: 0; background: rgba(0,0,0,0.35); z-index: 2500; opacity: 0; pointer-events: none; transition: 0.3s; display: flex; flex-direction: column; justify-content: flex-end; }
 .detail-sheet-bg.show { opacity: 1; pointer-events: auto; }
 .detail-sheet { width: 100%; height: 58%; background: #fff; border-radius: 22px 22px 0 0; transform: translateY(100%); transition: 0.4s cubic-bezier(0.16, 1, 0.3, 1); display: flex; flex-direction: column; box-shadow: 0 -8px 30px rgba(0,0,0,0.12); }
@@ -841,7 +1216,6 @@ html, body {
 
 .peak-hint { font-size: 12px; color: #ea580c; background: #fff7ed; padding: 8px 10px; border-radius: 10px; margin: 8px 0 0; }
 
-/* 分区评测（图书馆座位测评等场景）*/
 .zone-block { padding: 10px 0; border-bottom: 0.5px dashed #e5e5ea; }
 .zone-block:last-child { border-bottom: none; }
 .zone-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
@@ -860,7 +1234,7 @@ html, body {
 .detail-fav-btn.active { border-color: #ff9500; color: #ff9500; background: #fff7ed; }
 .detail-nav-btn { flex: 1.4; border: none; background: #007aff; color: #fff; padding: 12px 0; border-radius: 14px; font-size: 14px; font-weight: 600; cursor: pointer; }
 
-/* 底部原生导航栏 */
+/* ===== 底部导航栏 ===== */
 .native-tabbar { height: 50px; background: rgba(255,255,255,0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-top: 0.5px solid rgba(0,0,0,0.1); display: flex; justify-content: space-around; padding-bottom: env(safe-area-inset-bottom); z-index: 100; flex-shrink: 0; }
 .tab { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: #8e8e93; transition: 0.2s; width: 60px; cursor: pointer; }
 .tab-icon { font-size: 20px; filter: grayscale(1); opacity: 0.6; }
@@ -868,7 +1242,7 @@ html, body {
 .tab.active { color: #007aff; }
 .tab.active .tab-icon { filter: grayscale(0); opacity: 1; }
 
-/* Leaflet 地图气泡修正 */
+/* ===== Leaflet 地图气泡 ===== */
 .leaflet-popup-content-wrapper { border-radius: 14px; padding: 0; box-shadow: 0 4px 16px rgba(0,0,0,0.1); }
 .leaflet-popup-content { margin: 0; }
 .custom-popup { padding: 14px; }
@@ -879,4 +1253,342 @@ html, body {
 .cp-chip-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
 .cp-chip { font-size: 10px; font-weight: 600; color: #007aff; background: #e8f2ff; padding: 2px 8px; border-radius: 10px; }
 .cp-detail-btn { width: 100%; border: none; background: #007aff; color: #fff; padding: 9px 0; border-radius: 10px; font-size: 13px; font-weight: 600; cursor: pointer; }
+
+/* ================= 审核中心样式 ================= */
+.audit-center {
+  margin-top: 16px;
+  padding: 0 16px 16px;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.audit-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: #fff;
+  border-radius: 12px 12px 0 0;
+  border-bottom: 0.5px solid #e5e5ea;
+}
+
+.audit-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.audit-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: #007aff;
+  background: #e8f2ff;
+  padding: 2px 10px;
+  border-radius: 12px;
+}
+
+.audit-loading,
+.audit-empty {
+  padding: 30px 16px;
+  text-align: center;
+  background: #fff;
+  border-radius: 0 0 12px 12px;
+  color: #8e8e93;
+  font-size: 14px;
+}
+
+.audit-card {
+  background: #fff;
+  border-radius: 0;
+  padding: 14px 16px;
+  border-bottom: 0.5px solid #f2f2f7;
+}
+
+.audit-card:last-child {
+  border-radius: 0 0 12px 12px;
+}
+
+.audit-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.audit-card-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.audit-card-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.audit-card-cat {
+  font-size: 11px;
+  font-weight: 600;
+  color: #007aff;
+  background: #e8f2ff;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.audit-card-time {
+  font-size: 11px;
+  color: #8e8e93;
+}
+
+.audit-card-body {
+  margin-bottom: 10px;
+}
+
+.audit-card-desc {
+  margin: 0 0 6px 0;
+  font-size: 13px;
+  color: #4b5563;
+}
+
+.audit-card-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #8e8e93;
+}
+
+.audit-card-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.audit-btn {
+  flex: 1;
+  padding: 8px 0;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: 0.2s;
+}
+
+.audit-btn.approve {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.audit-btn.approve:hover {
+  background: #bbf7d0;
+}
+
+.audit-btn.reject {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.audit-btn.reject:hover {
+  background: #fecaca;
+}
+
+.audit-btn.delete {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.audit-btn.delete:hover {
+  background: #fecaca;
+}
+
+/* ===== 审核中心 Tab 样式 ===== */
+.audit-tabs {
+  display: flex;
+  background: #fff;
+  border-radius: 12px 12px 0 0;
+  border-bottom: 0.5px solid #e5e5ea;
+  overflow: hidden;
+}
+
+.audit-tab {
+  flex: 1;
+  text-align: center;
+  padding: 12px 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: #8e8e93;
+  cursor: pointer;
+  transition: 0.2s;
+  position: relative;
+}
+
+.audit-tab.active {
+  color: #007aff;
+  font-weight: 600;
+}
+
+.audit-tab.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 20%;
+  right: 20%;
+  height: 2.5px;
+  background: #007aff;
+  border-radius: 2px;
+}
+
+.tab-badge {
+  display: inline-block;
+  background: #e5e5ea;
+  color: #8e8e93;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 8px;
+  border-radius: 10px;
+  margin-left: 4px;
+}
+
+.audit-tab.active .tab-badge {
+  background: #e8f2ff;
+  color: #007aff;
+}
+
+.audit-card-status {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.audit-card-status.approved {
+  color: #166534;
+  background: #dcfce7;
+}
+
+/* ================= 我的模块样式 ================= */
+.my-section {
+  margin-top: 16px;
+}
+
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px 8px 12px;
+  background: #fff;
+  border-radius: 12px 12px 0 0;
+  border-bottom: 0.5px solid #e5e5ea;
+}
+
+.section-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.section-count {
+  font-size: 12px;
+  font-weight: 500;
+  color: #8e8e93;
+}
+
+.section-loading {
+  padding: 16px 12px;
+  text-align: center;
+  background: #fff;
+  color: #8e8e93;
+  font-size: 13px;
+}
+
+.section-empty {
+  padding: 16px 12px;
+  text-align: center;
+  background: #fff;
+  border-radius: 0 0 12px 12px;
+  color: #8e8e93;
+  font-size: 13px;
+}
+
+.my-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  background: #fff;
+  border-bottom: 0.5px solid #f2f2f7;
+  cursor: pointer;
+  transition: 0.15s;
+}
+.my-card:active {
+  background: #f2f2f7;
+}
+.my-card:last-child {
+  border-radius: 0 0 12px 12px;
+}
+
+.my-card-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.my-card-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: #1f2937;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.my-card-cat {
+  font-size: 11px;
+  font-weight: 600;
+  color: #007aff;
+  background: #e8f2ff;
+  padding: 2px 8px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.my-card-status {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 8px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+.my-card-status.approved {
+  color: #166534;
+  background: #dcfce7;
+}
+.my-card-status.pending {
+  color: #92400e;
+  background: #fffbeb;
+}
+
+.my-card-unfav {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: none;
+  background: #f2f2f7;
+  color: #8e8e93;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: 0.2s;
+}
+.my-card-unfav:hover {
+  background: #fee2e2;
+  color: #ef4444;
+}
 </style>
